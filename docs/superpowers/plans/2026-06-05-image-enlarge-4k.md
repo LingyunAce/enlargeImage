@@ -2140,12 +2140,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
-import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+import numpy as np
 
 from app.models.job import Job, JobStatus, ProgressEvent
 from app.pipeline.orchestrator import Pipeline
