@@ -72,3 +72,55 @@ def test_get_returns_latest_state(jm: JobManager, tmp_path: Path):
     got = jm.get(job.id)
     assert got is not None
     assert got.id == job.id
+
+
+def test_startup_reap_ghosts_marks_stale_as_failed(tmp_path: Path, runner: SwinIRRunner):
+    from datetime import datetime, timezone
+    fs = FileStore(root=str(tmp_path / "storage"))
+    js = JobStore(db_path=str(tmp_path / "test.db"))
+    # Pre-seed two stale jobs
+    now = datetime.now(timezone.utc)
+    js.upsert(Job(
+        id="g1", status=JobStatus.QUEUED, stage=None, progress=0.0,
+        scale=4, input_path="/nope", output_path=None, error=None,
+        created_at=now, updated_at=now,
+    ))
+    js.upsert(Job(
+        id="g2", status=JobStatus.RUNNING, stage=None, progress=0.5,
+        scale=4, input_path="/nope", output_path=None, error=None,
+        created_at=now, updated_at=now,
+    ))
+    jm = JobManager(store=js, file_store=fs, pipeline=Pipeline(
+        runner=runner, tiler=Tiler(64, 16), blender=SeamBlender()
+    ))
+    n = asyncio.run(jm.startup_reap_ghosts())
+    assert n == 2
+    stored_g1 = js.get("g1")
+    assert stored_g1.status is JobStatus.FAILED
+    assert stored_g1.error == "server_restart"
+
+
+def test_trim_removes_old_done_jobs(tmp_path: Path, runner: SwinIRRunner):
+    from datetime import datetime, timedelta, timezone
+    fs = FileStore(root=str(tmp_path / "storage"))
+    js = JobStore(db_path=str(tmp_path / "test.db"))
+    jm = JobManager(store=js, file_store=fs, pipeline=Pipeline(
+        runner=runner, tiler=Tiler(64, 16), blender=SeamBlender()
+    ))
+    now = datetime.now(timezone.utc)
+    seeded_ids = []
+    for i in range(5):
+        jid, _ = fs.new_job_dir()
+        js.upsert(Job(
+            id=jid, status=JobStatus.DONE, stage=None, progress=1.0,
+            scale=4, input_path="/nope", output_path=None, error=None,
+            created_at=now - timedelta(minutes=10 - i), updated_at=now,
+        ))
+        seeded_ids.append(jid)
+    # Add the pre-seeded jobs to the manager's cache so list_recent can find them
+    for jid in seeded_ids:
+        jm._cache[jid] = js.get(jid)
+    deleted = jm.trim(keep=2)
+    assert deleted == 3
+    remaining = jm.list_recent(limit=100)
+    assert len(remaining) == 2

@@ -180,6 +180,75 @@ class JobManager:
         except asyncio.CancelledError:
             return
 
+    async def cancel(self, job_id: str) -> bool:
+        job = self._cache.get(job_id)
+        if job is None or job.status not in (JobStatus.QUEUED, JobStatus.RUNNING):
+            return False
+        if job.status == JobStatus.QUEUED:
+            # Not yet started: mark canceled and let the task wake up
+            self._update(job_id, status=JobStatus.CANCELED)
+            return True
+        # RUNNING: set flag; the next on_progress will raise CanceledError
+        self._cancel_flags[job_id] = True
+        return True
+
+    async def delete(self, job_id: str) -> bool:
+        job = self._cache.get(job_id)
+        if job is None:
+            return False
+        if job.status == JobStatus.RUNNING:
+            await self.cancel(job_id)
+            # Wait for the task to wind down
+            t = self._tasks.get(job_id)
+            if t is not None:
+                try:
+                    await asyncio.wait_for(t, timeout=10)
+                except asyncio.TimeoutError:
+                    t.cancel()
+        # Remove from cache, store, and disk
+        self._cache.pop(job_id, None)
+        self._dirty.discard(job_id)
+        self.store.delete(job_id)
+        self.file_store.delete_job(job_id)
+        return True
+
+    def trim(self, keep: int) -> int:
+        # Identify candidates older than the newest `keep` jobs
+        all_jobs = self.list_recent(limit=10_000)
+        if len(all_jobs) <= keep:
+            return 0
+        to_remove = all_jobs[keep:]
+        n = 0
+        for j in to_remove:
+            if j.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+                continue  # never delete active jobs
+            self._cache.pop(j.id, None)
+            self._dirty.discard(j.id)
+            try:
+                import sqlite3 as _sq
+                conn = _sq.connect(self.store.db_path)
+                try:
+                    conn.execute("DELETE FROM jobs WHERE id = ?", (j.id,))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                log.exception("trim: failed to delete row %s", j.id)
+                continue
+            self.file_store.delete_job(j.id)
+            n += 1
+        return n
+
+    async def startup_reap_ghosts(self) -> int:
+        n = self.store.mark_stale_as_failed("server_restart")
+        # Reload affected rows into cache so subsequent get() reflects truth
+        if n > 0:
+            for j in self._cache.values():
+                fresh = self.store.get(j.id)
+                if fresh is not None:
+                    self._cache[j.id] = fresh
+        return n
+
 
 def _encode_png(arr: np.ndarray, path: str) -> None:
     from PIL import Image
