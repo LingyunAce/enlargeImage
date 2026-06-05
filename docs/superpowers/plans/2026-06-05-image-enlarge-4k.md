@@ -1115,10 +1115,9 @@ def _make_job(jid: str, created: datetime, status=JobStatus.QUEUED) -> Job:
 
 
 def test_upsert_then_get(store: JobStore):
-    import asyncio
     j = _make_job("j1", datetime(2026, 1, 1, tzinfo=timezone.utc))
     store.upsert(j)
-    got = asyncio.get_event_loop().run_until_complete(store.get("j1"))
+    got = store.get("j1")
     assert got is not None
     assert got.id == "j1"
     assert got.status is JobStatus.QUEUED
@@ -1126,28 +1125,25 @@ def test_upsert_then_get(store: JobStore):
 
 
 def test_get_missing_returns_none(store: JobStore):
-    import asyncio
-    assert asyncio.get_event_loop().run_until_complete(store.get("nope")) is None
+    assert store.get("nope") is None
 
 
 def test_upsert_overwrites_existing(store: JobStore):
-    import asyncio
     j = _make_job("j1", datetime(2026, 1, 1, tzinfo=timezone.utc))
     store.upsert(j)
     j2 = _make_job("j1", datetime(2026, 1, 1, tzinfo=timezone.utc), status=JobStatus.RUNNING)
     j2.progress = 0.5
     store.upsert(j2)
-    got = asyncio.get_event_loop().run_until_complete(store.get("j1"))
+    got = store.get("j1")
     assert got.status is JobStatus.RUNNING
     assert got.progress == 0.5
 
 
 def test_delete_removes_row(store: JobStore):
-    import asyncio
     j = _make_job("j1", datetime(2026, 1, 1, tzinfo=timezone.utc))
     store.upsert(j)
-    asyncio.get_event_loop().run_until_complete(store.delete("j1"))
-    assert asyncio.get_event_loop().run_until_complete(store.get("j1")) is None
+    store.delete("j1")
+    assert store.get("j1") is None
 ```
 
 - [ ] **Step 5: Run tests and commit**
@@ -1179,21 +1175,19 @@ Append to `D:/AI/project/EnlargeImage/backend/tests/test_job_store.py`:
 
 ```python
 def test_list_recent_returns_newest_first(store: JobStore):
-    import asyncio
     j1 = _make_job("j1", datetime(2026, 1, 1, tzinfo=timezone.utc))
     j2 = _make_job("j2", datetime(2026, 1, 2, tzinfo=timezone.utc))
     j3 = _make_job("j3", datetime(2026, 1, 3, tzinfo=timezone.utc))
     for j in [j1, j2, j3]:
         store.upsert(j)
-    recent = asyncio.get_event_loop().run_until_complete(store.list_recent(10))
+    recent = store.list_recent(10)
     assert [j.id for j in recent] == ["j3", "j2", "j1"]
 
 
 def test_list_recent_respects_limit(store: JobStore):
-    import asyncio
     for i in range(5):
         store.upsert(_make_job(f"j{i}", datetime(2026, 1, i + 1, tzinfo=timezone.utc)))
-    recent = asyncio.get_event_loop().run_until_complete(store.list_recent(2))
+    recent = store.list_recent(2)
     assert len(recent) == 2
     assert recent[0].id == "j4"
 
@@ -1211,11 +1205,9 @@ def test_mark_stale_as_failed_changes_queued_and_running(store: JobStore):
     store.upsert(_make_job("c", datetime(2026, 1, 1, tzinfo=timezone.utc), status=JobStatus.DONE))
     n = store.mark_stale_as_failed("server_restart")
     assert n == 2
-    import asyncio
-    loop = asyncio.get_event_loop()
-    a = loop.run_until_complete(store.get("a"))
-    b = loop.run_until_complete(store.get("b"))
-    c = loop.run_until_complete(store.get("c"))
+    a = store.get("a")
+    b = store.get("b")
+    c = store.get("c")
     assert a.status is JobStatus.FAILED and a.error == "server_restart"
     assert b.status is JobStatus.FAILED and b.error == "server_restart"
     assert c.status is JobStatus.DONE  # untouched
@@ -2396,8 +2388,7 @@ def test_startup_reap_ghosts_marks_stale_as_failed(tmp_path: Path, runner: SwinI
     g1 = jm.get("g1")
     g2 = jm.get("g2")
     # Note: cache may not be populated for pre-seeded rows; check via store
-    import asyncio as _a
-    stored_g1 = _a.get_event_loop().run_until_complete(js.get("g1"))
+    stored_g1 = js.get("g1")
     assert stored_g1.status is JobStatus.FAILED
     assert stored_g1.error == "server_restart"
 
@@ -2465,7 +2456,7 @@ Append to the end of the `JobManager` class in `D:/AI/project/EnlargeImage/backe
         # Remove from cache, store, and disk
         self._cache.pop(job_id, None)
         self._dirty.discard(job_id)
-        await self.store.delete(job_id)
+        self.store.delete(job_id)
         self.file_store.delete_job(job_id)
         return True
 
@@ -2504,7 +2495,7 @@ Append to the end of the `JobManager` class in `D:/AI/project/EnlargeImage/backe
         # Reload affected rows into cache so subsequent get() reflects truth
         if n > 0:
             for j in self._cache.values():
-                fresh = await self.store.get(j.id)
+                fresh = self.store.get(j.id)
                 if fresh is not None:
                     self._cache[j.id] = fresh
         return n
