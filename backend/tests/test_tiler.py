@@ -9,18 +9,17 @@ def tiler() -> Tiler:
 
 
 def test_split_even_dimensions_yields_uniform_tiles(tiler: Tiler):
-    # 384 = 2 * (192 - 24) + 24 = 336 + 48, no — recalc:
-    # step = 192 - 24 = 168. For W=512: 0..192, 168..360, 336..504, 504..512 (clipped to 512, w=8)
-    # Better: use W = 192 + 168 + 168 = 528? No. Use W=384: tiles 0..192, 168..360, 336..384(w=48)
+    # For W=384, tile=192, overlap=24, step=168:
+    # stops = [0, 168, 192] (last is right-edge flush)
+    # All 3 tiles have full width 192, total 3 tiles
     img = np.zeros((100, 384, 3), dtype=np.uint8)
     tiles = tiler.split(img, scale=2)
-    # Tiles in y: only 1 (H=100 < 192, so y=0, h=100, w=384... wait that's whole width)
-    # Actually with H=100, tiler produces one tile covering full height
-    # Width: step=168, start positions 0, 168, 336, then last 384-336=48
-    assert len(tiles) == 4
+    # y: only 1 (H=100 < 192, so y=0, h=100)
+    # x: 3 stops as computed above
+    assert len(tiles) == 3
     assert tiles[0].x == 0 and tiles[0].w == 192
     assert tiles[1].x == 168 and tiles[1].w == 192
-    assert tiles[2].x == 336 and tiles[2].w == 48  # clipped to remaining
+    assert tiles[2].x == 192 and tiles[2].w == 192
 
 
 def test_expected_count_matches_split(tiler: Tiler):
