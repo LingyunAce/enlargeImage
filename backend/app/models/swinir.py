@@ -18,10 +18,12 @@ def build_swinir(scale: int) -> SwinIR:
       - depths    = [6, 6, 6, 6, 6, 6]
       - num_heads = [6, 6, 6, 6, 6, 6]
       - window_size = 8
-      - upsampler  = 'nearest+conv' (a Real-World Image SR trait)
+      - upsampler  = 'nearest+conv' for x4 (Real-World Image SR trait),
+        'pixelshuffle' for x2/x8 (the 'nearest+conv' branch only supports x4).
     """
     if scale not in (2, 4, 8):
         raise ValueError(f"unsupported scale: {scale}")
+    upsampler = "nearest+conv" if scale == 4 else "pixelshuffle"
     return SwinIR(
         upscale=scale,
         in_chans=3,
@@ -32,6 +34,6 @@ def build_swinir(scale: int) -> SwinIR:
         embed_dim=180,
         num_heads=[6, 6, 6, 6, 6, 6],
         mlp_ratio=2,
-        upsampler="nearest+conv",
+        upsampler=upsampler,
         resi_connection="1conv",
     )
