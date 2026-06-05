@@ -4,7 +4,7 @@ import { Uploader } from "@/components/Uploader";
 import { ProgressPanel } from "@/components/ProgressPanel";
 import { HistoryList } from "@/components/HistoryList";
 import { CompareViewer } from "@/components/CompareViewer";
-import { createJob, deleteJob, getJob, listJobs, pollJob } from "@/lib/api";
+import { createJob, deleteJob, listJobs, pollJob } from "@/lib/api";
 import type { Job } from "@/lib/types";
 
 export default function HomePage() {
@@ -12,6 +12,7 @@ export default function HomePage() {
   const [active, setActive] = useState<Job | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inputUrl, setInputUrl] = useState<string | null>(null);
+  const inputUrlRef = useRef<string | null>(null);
   const pollAbort = useRef<AbortController | null>(null);
 
   const refresh = async () => {
@@ -28,18 +29,21 @@ export default function HomePage() {
       const j = jobs.find((x) => x.id === selectedId);
       if (j) {
         setActive(j);
-        if (j.status === "done") {
-          // Fetch input blob for compare view
-          fetch(`/api/jobs/${j.id}/output`).then((r) => {
-            // not used; we use input blob instead. Re-fetch input via /output is for output only.
-          });
-        }
       }
     }
   }, [selectedId, jobs]);
 
+  useEffect(() => {
+    return () => {
+      if (inputUrlRef.current) URL.revokeObjectURL(inputUrlRef.current);
+    };
+  }, []);
+
   const onSubmit = async (file: File, scale: number) => {
-    setInputUrl(URL.createObjectURL(file));
+    if (inputUrlRef.current) URL.revokeObjectURL(inputUrlRef.current);
+    const url = URL.createObjectURL(file);
+    inputUrlRef.current = url;
+    setInputUrl(url);
     const job = await createJob(file, scale);
     setActive(job);
     setSelectedId(job.id);
@@ -86,7 +90,13 @@ export default function HomePage() {
       <HistoryList
         jobs={jobs}
         selectedId={selectedId}
-        onSelect={(id) => { setSelectedId(id); setActive(null); }}
+        onSelect={(id) => {
+          setSelectedId(id);
+          setActive(null);
+          if (inputUrlRef.current) URL.revokeObjectURL(inputUrlRef.current);
+          inputUrlRef.current = null;
+          setInputUrl(null);
+        }}
         onDelete={onDelete}
       />
     </main>
