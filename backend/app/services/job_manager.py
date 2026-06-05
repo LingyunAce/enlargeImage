@@ -269,3 +269,14 @@ def _safe_unlink(path: str) -> None:
 
 class CanceledError(Exception):
     pass
+
+
+class _StubRunner:
+    """No-op runner used by the default app. Returns a zero image of correct shape."""
+    def __init__(self, scale: int = 4):
+        self.scale = scale
+
+    def infer(self, image):
+        import numpy as np
+        h, w = image.shape[:2]
+        return np.zeros((h * self.scale, w * self.scale, 3), dtype=np.uint8)

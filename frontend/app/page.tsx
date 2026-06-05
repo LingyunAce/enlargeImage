@@ -14,6 +14,7 @@ export default function HomePage() {
   const [inputUrl, setInputUrl] = useState<string | null>(null);
   const inputUrlRef = useRef<string | null>(null);
   const pollAbort = useRef<AbortController | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
 
   const refresh = async () => {
     const list = await listJobs();
@@ -47,15 +48,23 @@ export default function HomePage() {
     const job = await createJob(file, scale);
     setActive(job);
     setSelectedId(job.id);
+    selectedIdRef.current = job.id;  // NEW
     await refresh();
     pollAbort.current = new AbortController();
     try {
       const final = await pollJob(
         job.id,
-        (j) => setActive(j),
+        (j) => {
+          // Only update if user hasn't selected a different job
+          if (selectedIdRef.current === job.id) {
+            setActive(j);
+          }
+        },
         pollAbort.current.signal,
       );
-      setActive(final);
+      if (selectedIdRef.current === job.id) {
+        setActive(final);
+      }
     } catch (e) {
       if (!(e instanceof DOMException && e.name === "AbortError")) {
         console.error(e);
@@ -91,6 +100,7 @@ export default function HomePage() {
         jobs={jobs}
         selectedId={selectedId}
         onSelect={(id) => {
+          selectedIdRef.current = id;
           setSelectedId(id);
           setActive(null);
           if (inputUrlRef.current) URL.revokeObjectURL(inputUrlRef.current);

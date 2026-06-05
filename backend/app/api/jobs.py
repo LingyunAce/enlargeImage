@@ -16,6 +16,10 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
+class _TooLarge(Exception):
+    pass
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_job(
     file: UploadFile = File(...),
@@ -52,21 +56,23 @@ async def create_job(
             im.load()
             if im.mode != "RGB":
                 im = im.convert("RGB")
+            w, h = im.size
+            if w * h > s.max_input_pixels:
+                raise _TooLarge(f"{w * h} > {s.max_input_pixels}")
             jid, _ = jm.file_store.new_job_dir()
             input_path = jm.file_store.path(jid, "input.png")
             im.save(input_path, format="PNG")
-            return jid, input_path, im.size
+            return jid, input_path, (w, h)
         loop = asyncio.get_event_loop()
         jid, input_path, (w, h) = await loop.run_in_executor(None, _decode_and_save)
-    except Exception:
-        log.exception("decode failed")
-        raise HTTPException(status_code=400, detail={"error": "decode_failed"})
-
-    if w * h > s.max_input_pixels:
+    except _TooLarge as e:
         raise HTTPException(status_code=413, detail={
             "error": "image_too_large", "max_pixels": s.max_input_pixels,
             "got_pixels": w * h,
         })
+    except Exception:
+        log.exception("decode failed")
+        raise HTTPException(status_code=400, detail={"error": "decode_failed"})
 
     # Create job
     job = await jm.create(input_path=input_path, scale=scale, jid=jid)
