@@ -69,7 +69,7 @@ async def create_job(
         })
 
     # Create job
-    job = await jm.create(input_path=input_path, scale=scale)
+    job = await jm.create(input_path=input_path, scale=scale, jid=jid)
     return job.to_dict()
 
 

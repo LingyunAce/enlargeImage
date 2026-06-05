@@ -58,8 +58,10 @@ class JobManager:
 
     # --- public API ---
 
-    async def create(self, input_path: str, scale: int) -> Job:
-        jid, _ = self.file_store.new_job_dir()
+    async def create(self, input_path: str, scale: int, jid: Optional[str] = None) -> Job:
+        if jid is None:
+            jid, _ = self.file_store.new_job_dir()
+        # else: caller pre-allocated the directory (and presumably saved the input there)
         now = datetime.now(timezone.utc)
         job = Job(
             id=jid,
