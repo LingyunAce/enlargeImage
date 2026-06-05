@@ -56,5 +56,7 @@ def test_pipeline_emits_inference_progress_monotonically(runner: SwinIRRunner):
     pipeline.run(img, scale=2, on_progress=cb)
     inf_events = [ev for ev in events if ev.stage == "inference"]
     currents = [ev.current for ev in inf_events]
-    assert currents == sorted(currents)
-    assert currents[-1] == inf_events[-1].total  # last event reports total
+    total = inf_events[-1].total
+    # Must be exactly 1..total with no gaps or duplicates
+    assert currents == list(range(1, total + 1))
+    assert total >= 1  # at least one tile was processed
