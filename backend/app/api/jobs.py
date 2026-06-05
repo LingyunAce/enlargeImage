@@ -1,26 +1,19 @@
 """HTTP routes for job lifecycle."""
 from __future__ import annotations
 
+import asyncio
+import io
 import logging
-import os
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from PIL import Image
 
-from app.models.job import Job, JobStatus
+from app.api.deps import get_jm
 from app.services.job_manager import JobManager
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
-
-
-# --- DI: JobManager is stored on app.state at startup ---
-def get_jm(request: Request) -> JobManager:
-    return request.app.state.job_manager
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -30,8 +23,6 @@ async def create_job(
     jm: JobManager = Depends(get_jm),
 ) -> dict:
     # Validate scale
-    settings = jm.store  # not really — use jm's settings via app
-    # We read settings from app.state to keep things explicit
     from app.config import get_settings
     s = get_settings()
     if scale not in s.supported_scales:
@@ -54,16 +45,21 @@ async def create_job(
             "error": "file_too_large", "max_bytes": s.max_input_bytes,
         })
 
-    # Decode
+    # Decode + save to disk in a worker thread (CPU/IO bound)
     try:
-        from PIL import Image
-        import io as _io
-        im = Image.open(_io.BytesIO(body))
-        im.load()
-        if im.mode != "RGB":
-            im = im.convert("RGB")
-        w, h = im.size
+        def _decode_and_save():
+            im = Image.open(io.BytesIO(body))
+            im.load()
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            jid, _ = jm.file_store.new_job_dir()
+            input_path = jm.file_store.path(jid, "input.png")
+            im.save(input_path, format="PNG")
+            return jid, input_path, im.size
+        loop = asyncio.get_event_loop()
+        jid, input_path, (w, h) = await loop.run_in_executor(None, _decode_and_save)
     except Exception:
+        log.exception("decode failed")
         raise HTTPException(status_code=400, detail={"error": "decode_failed"})
 
     if w * h > s.max_input_pixels:
@@ -72,24 +68,8 @@ async def create_job(
             "got_pixels": w * h,
         })
 
-    # Persist input to disk
-    jid, _ = jm.file_store.new_job_dir()
-    input_path = jm.file_store.path(jid, "input.png")
-    im.save(input_path, format="PNG")
-
     # Create job
-    from datetime import timezone
-    now = datetime.now(timezone.utc)
-    job = Job(
-        id=jid, status=JobStatus.QUEUED, stage=None, progress=0.0,
-        scale=scale, input_path=input_path, output_path=None, error=None,
-        created_at=now, updated_at=now,
-    )
-    jm._cache[jid] = job
-    jm.store.upsert(job)
-    jm._tasks[jid] = __import__("asyncio").create_task(jm._run_job(job))
-    jm._tasks[jid].set_name(f"job-{jid}")
-    jm._wake_next.set()
+    job = await jm.create(input_path=input_path, scale=scale)
     return job.to_dict()
 
 

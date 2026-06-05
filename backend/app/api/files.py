@@ -1,16 +1,15 @@
 """Output file download route."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
+from app.api.deps import get_jm
 from app.services.job_manager import JobManager
 
 router = APIRouter(prefix="/api/jobs", tags=["files"])
-
-
-def get_jm(request: Request) -> JobManager:
-    return request.app.state.job_manager
 
 
 @router.get("/{job_id}/output")
@@ -23,7 +22,6 @@ async def get_output(job_id: str, jm: JobManager = Depends(get_jm)):
             status_code=409,
             detail={"error": "not_ready", "status": job.status.value},
         )
-    from pathlib import Path
     p = Path(job.output_path)
     if not p.exists():
         raise HTTPException(status_code=410, detail={"error": "output_missing"})
