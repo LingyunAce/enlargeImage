@@ -38,3 +38,7 @@ def create_app(job_manager: Optional[JobManager] = None) -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(files_router)
     return app
+
+
+# Default app instance for `uvicorn app.main:app` (the factory is for tests)
+app = create_app()
