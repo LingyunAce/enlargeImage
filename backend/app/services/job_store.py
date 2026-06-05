@@ -114,3 +114,55 @@ class JobStore:
             conn.commit()
         finally:
             conn.close()
+
+    def list_recent(self, limit: int) -> list[Job]:
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            )
+            rows = cur.fetchall()
+            return [_row_to_job(r) for r in rows]
+        finally:
+            conn.close()
+
+    def list_ids_older_than(self, keep: int) -> list[str]:
+        """Return job_ids of rows beyond the newest `keep`, ordered oldest first."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cur = conn.execute(
+                """
+                SELECT id FROM jobs
+                ORDER BY created_at DESC
+                LIMIT -1 OFFSET ?
+                """,
+                (keep,),
+            )
+            rows = cur.fetchall()
+            # Rows are newest-first; reverse to oldest-first for caller convenience
+            return [r[0] for r in reversed(rows)]
+        finally:
+            conn.close()
+
+    def mark_stale_as_failed(self, reason: str) -> int:
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cur = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, error = ?, updated_at = ?
+                WHERE status IN (?, ?)
+                """,
+                (
+                    JobStatus.FAILED.value,
+                    reason,
+                    datetime.now().astimezone().isoformat(),
+                    JobStatus.QUEUED.value,
+                    JobStatus.RUNNING.value,
+                ),
+            )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
