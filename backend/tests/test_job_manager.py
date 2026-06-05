@@ -37,24 +37,38 @@ def jm(tmp_path: Path, runner: SwinIRRunner) -> JobManager:
     jm.shutdown()
 
 
-def test_create_queues_job(jm: JobManager, tmp_path: Path):
+def test_create_completes_job_to_done(jm: JobManager, tmp_path: Path):
     inp = tmp_path / "input.png"
     from PIL import Image
-    Image.new("RGB", (50, 50), (255, 0, 0)).save(inp)
-    job = asyncio.get_event_loop().run_until_complete(
-        jm.create(input_path=str(inp), scale=2)
-    )
-    assert job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
-    assert job.scale == 2
+    # SwinIR's window partition requires dimensions divisible by window_size (8),
+    # and the model is built with img_size=64. 64x64 is the smallest valid input.
+    Image.new("RGB", (64, 64), (255, 0, 0)).save(inp)
+
+    async def run() -> Job:
+        job = await jm.create(input_path=str(inp), scale=2)
+        # Poll until terminal. Must use asyncio.sleep (not time.sleep) so the
+        # event loop stays free to run the job task and process executor
+        # completion callbacks.
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            latest = jm.get(job.id)
+            if latest.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELED):
+                return latest
+            await asyncio.sleep(0.1)
+        return jm.get(job.id)
+
+    final = asyncio.run(run())
+    assert final is not None
+    assert final.status is JobStatus.DONE, f"expected DONE, got {final.status} (error: {final.error})"
 
 
 def test_get_returns_latest_state(jm: JobManager, tmp_path: Path):
     inp = tmp_path / "input.png"
     from PIL import Image
-    Image.new("RGB", (50, 50), (255, 0, 0)).save(inp)
-    job = asyncio.get_event_loop().run_until_complete(
-        jm.create(input_path=str(inp), scale=2)
-    )
+    # Use 64x64 so the model's window partition is valid; we don't wait for
+    # completion here, but the size keeps the job from failing on launch.
+    Image.new("RGB", (64, 64), (255, 0, 0)).save(inp)
+    job = asyncio.run(jm.create(input_path=str(inp), scale=2))
     got = jm.get(job.id)
     assert got is not None
     assert got.id == job.id
