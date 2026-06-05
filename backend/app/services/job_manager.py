@@ -95,6 +95,10 @@ class JobManager:
             if self._shutdown:
                 self._update(job.id, status=JobStatus.CANCELED, error="server_shutdown")
                 return
+            # NEW: check cancel flag before transitioning to RUNNING
+            if self._cancel_flags.pop(job.id, None):
+                self._update(job.id, status=JobStatus.CANCELED)
+                return
             self._update(job.id, status=JobStatus.RUNNING, stage="tiling", progress=0.0)
             output_path = self.file_store.path(job.id, "output.png")
 
@@ -208,6 +212,7 @@ class JobManager:
         # Remove from cache, store, and disk
         self._cache.pop(job_id, None)
         self._dirty.discard(job_id)
+        self._cancel_flags.pop(job_id, None)
         self.store.delete(job_id)
         self.file_store.delete_job(job_id)
         return True
@@ -241,12 +246,10 @@ class JobManager:
 
     async def startup_reap_ghosts(self) -> int:
         n = self.store.mark_stale_as_failed("server_restart")
-        # Reload affected rows into cache so subsequent get() reflects truth
-        if n > 0:
-            for j in self._cache.values():
-                fresh = self.store.get(j.id)
-                if fresh is not None:
-                    self._cache[j.id] = fresh
+        # Materialize all store rows into cache so get() reflects the reaped truth
+        all_rows = self.store.list_recent(limit=10_000)
+        for fresh in all_rows:
+            self._cache[fresh.id] = fresh
         return n
 
 

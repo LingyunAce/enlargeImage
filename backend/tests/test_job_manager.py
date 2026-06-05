@@ -98,6 +98,7 @@ def test_startup_reap_ghosts_marks_stale_as_failed(tmp_path: Path, runner: SwinI
     stored_g1 = js.get("g1")
     assert stored_g1.status is JobStatus.FAILED
     assert stored_g1.error == "server_restart"
+    assert jm.get("g1").status is JobStatus.FAILED
 
 
 def test_trim_removes_old_done_jobs(tmp_path: Path, runner: SwinIRRunner):
@@ -124,3 +125,26 @@ def test_trim_removes_old_done_jobs(tmp_path: Path, runner: SwinIRRunner):
     assert deleted == 3
     remaining = jm.list_recent(limit=100)
     assert len(remaining) == 2
+
+
+def test_cancel_queued_job_stays_canceled(tmp_path: Path, runner: SwinIRRunner):
+    """A job that is canceled while QUEUED must not transition to RUNNING."""
+    fs = FileStore(root=str(tmp_path / "storage"))
+    js = JobStore(db_path=str(tmp_path / "test.db"))
+    jm = JobManager(store=js, file_store=fs, pipeline=Pipeline(
+        runner=runner, tiler=Tiler(64, 16), blender=SeamBlender()
+    ))
+    # Don't create a real job — simulate the QUEUED state directly
+    from app.models.job import Job
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    jm._cache["q1"] = Job(
+        id="q1", status=JobStatus.QUEUED, stage=None, progress=0.0,
+        scale=2, input_path="/nope", output_path=None, error=None,
+        created_at=now, updated_at=now,
+    )
+    canceled = asyncio.run(jm.cancel("q1"))
+    assert canceled is True
+    final = jm.get("q1")
+    assert final is not None
+    assert final.status is JobStatus.CANCELED
