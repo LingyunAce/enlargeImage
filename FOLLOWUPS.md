@@ -5,11 +5,7 @@ Tech debt and known issues from the initial implementation (2026-06-06). All ite
 ## High Priority
 
 ### Multi-scale SwinIR runner dict (spec §10)
-**Status:** Not implemented. Spec calls for loading weights for all available scales (`{2: runner2, 4: runner4, 8: runner8}`) and routing by requested scale. Current code loads a single runner at startup.
-
-**Impact:** Requests for a scale whose weights aren't loaded will fail at `Pipeline.run`'s `scale != runner.scale` assertion. The README's "If only X4 is present, requests for scale=2 or scale=8 will return 503" claim is currently false.
-
-**Suggested fix:** Build a `RunnerRegistry` in `main.py` that scans `MODEL_DIR/*.pth` at startup, instantiates one `SwinIRRunner` per file (using the X{scale} suffix to determine scale), and routes requests based on the requested scale. The Pipeline needs to accept a runner-per-call rather than a single runner.
+**Status:** ✅ **Resolved** (commits `f3e0f89` and `33e59c7`). `MultiRunner` class in `backend/app/pipeline/runner.py` dispatches by scale. `backend/run.py` scans `MODEL_DIR/*.pth`, instantiates one `SwinIRRunner` per file, and wires them into a `MultiRunner`. `Pipeline.run` was updated to use `supports_scale()` instead of strict equality. 47 tests pass including a new `test_multi_runner_routes_by_scale`.
 
 ### Frontend state stomping during polling
 **Status:** Mostly fixed (commit `4a2bf80`). When the user selects a different history item while a job is polling, `setActive` no longer stomps the selected job. However, the disabled state of the Uploader is only based on `active.status === "running"`, not `"queued"`, which can allow a double-submit during the queued window.
