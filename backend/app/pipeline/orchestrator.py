@@ -25,9 +25,10 @@ class Pipeline:
         scale: int,
         on_progress: Callable[[ProgressEvent], None],
     ) -> np.ndarray:
-        if scale != self.runner.scale:
+        if not self.runner.supports_scale(scale):
             raise ValueError(
-                f"requested scale {scale} != runner scale {self.runner.scale}"
+                f"runner does not support scale {scale}; "
+                f"available: {getattr(self.runner, 'scale', 'unknown')}"
             )
         h, w = image.shape[:2]
         canvas_h, canvas_w = h * scale, w * scale
@@ -41,7 +42,7 @@ class Pipeline:
         total = len(tiles)
         for i, req in enumerate(tiles, start=1):
             tile = image[req.y:req.y + req.h, req.x:req.x + req.w, :]
-            out_tile = self.runner.infer(tile)
+            out_tile = self.runner.infer(tile, scale=scale)
             # Translate to OUTPUT-space coordinates for the blender
             out_req = _to_output_coords(req, scale)
             results.append((out_req, out_tile))

@@ -276,7 +276,11 @@ class _StubRunner:
     def __init__(self, scale: int = 4):
         self.scale = scale
 
-    def infer(self, image):
+    def supports_scale(self, scale: int) -> bool:
+        return scale == self.scale
+
+    def infer(self, image, scale: int | None = None):
         import numpy as np
         h, w = image.shape[:2]
-        return np.zeros((h * self.scale, w * self.scale, 3), dtype=np.uint8)
+        s = scale if scale is not None else self.scale
+        return np.zeros((h * s, w * s, 3), dtype=np.uint8)

@@ -32,8 +32,19 @@ class SwinIRRunner:
             with torch.no_grad():
                 _ = self.model(torch.zeros(1, 3, 64, 64, device=self.device))
 
-    def infer(self, image: np.ndarray) -> np.ndarray:
-        """Run inference. image: (H, W, 3) uint8 RGB -> (H*scale, W*scale, 3) uint8."""
+    def supports_scale(self, scale: int) -> bool:
+        """Return True if this runner can handle the requested scale."""
+        return scale == self.scale
+
+    def infer(self, image: np.ndarray, scale: int | None = None) -> np.ndarray:
+        """Run inference. image: (H, W, 3) uint8 RGB -> (H*scale, W*scale, 3) uint8.
+
+        If `scale` is provided, it must match this runner's native scale.
+        """
+        if scale is not None and scale != self.scale:
+            raise ValueError(
+                f"runner only supports scale={self.scale}, got {scale}"
+            )
         if image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("image must be (H, W, 3)")
         # To torch: (1, 3, H, W), float32 in [0, 1]
@@ -46,3 +57,37 @@ class SwinIRRunner:
         y = y.squeeze(0).clamp(0.0, 1.0).cpu().permute(1, 2, 0).numpy()
         y = (y * 255.0).round().astype(np.uint8)
         return y
+
+
+class MultiRunner:
+    """Routes inference to one of several SwinIRRunners by scale.
+
+    Looks like a SwinIRRunner from the outside (supports_scale, infer,
+    warmup), but dispatches based on the requested scale.
+    """
+
+    def __init__(self, runners: dict[int, SwinIRRunner]) -> None:
+        if not runners:
+            raise ValueError("MultiRunner requires at least one runner")
+        self._runners = runners
+
+    @property
+    def scale(self) -> tuple[int, ...]:
+        """Returns the tuple of supported scales."""
+        return tuple(sorted(self._runners.keys()))
+
+    def supports_scale(self, scale: int) -> bool:
+        return scale in self._runners
+
+    def infer(self, image: np.ndarray, scale: int) -> np.ndarray:
+        if scale not in self._runners:
+            raise ValueError(
+                f"MultiRunner does not support scale={scale}; "
+                f"available: {self.scale}"
+            )
+        return self._runners[scale].infer(image)
+
+    def warmup(self) -> None:
+        """Warm up all runners."""
+        for r in self._runners.values():
+            r.warmup()

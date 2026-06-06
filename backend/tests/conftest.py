@@ -16,9 +16,14 @@ class FakeRunner:
     """Returns a deterministic upscaled image. scale=2 -> (2H, 2W)."""
     def __init__(self, scale: int = 2):
         self.scale = scale
-    def infer(self, image: np.ndarray) -> np.ndarray:
+
+    def supports_scale(self, scale: int) -> bool:
+        return scale == self.scale
+
+    def infer(self, image: np.ndarray, scale: int | None = None) -> np.ndarray:
         h, w = image.shape[:2]
-        return np.zeros((h * self.scale, w * self.scale, 3), dtype=np.uint8)
+        s = scale if scale is not None else self.scale
+        return np.zeros((h * s, w * s, 3), dtype=np.uint8)
 
 
 @pytest.fixture
