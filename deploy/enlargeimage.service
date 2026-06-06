@@ -1,0 +1,49 @@
+[Unit]
+Description=EnlargeImage backend (SwinIR upscaling service)
+Documentation=https://github.com/LingyunAce/enlargeImage
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=enlargeimage
+Group=enlargeimage
+WorkingDirectory=/opt/enlargeimage/backend
+Environment="PATH=/opt/enlargeimage/backend/.venv/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+# Defaults; override in /etc/enlargeimage/enlargeimage.env if needed
+EnvironmentFile=-/etc/enlargeimage/enlargeimage.env
+
+ExecStart=/opt/enlargeimage/backend/.venv/bin/python run.py
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging: journald captures stdout/stderr; pair with journalctl -u enlargeimage
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=enlargeimage
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/enlargeimage/backend/storage /opt/enlargeimage/backend/data.db /var/log/enlargeimage
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
