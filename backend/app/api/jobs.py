@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import sys
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from PIL import Image, UnidentifiedImageError
@@ -26,6 +27,7 @@ async def create_job(
     scale: int = Form(...),
     jm: JobManager = Depends(get_jm),
 ) -> dict:
+    print(f"[jobs] create_job called: filename={file.filename!r} content_type={file.content_type!r} scale={scale}", file=sys.stderr, flush=True)
     # Validate scale
     from app.config import get_settings
     s = get_settings()
@@ -66,12 +68,14 @@ async def create_job(
         loop = asyncio.get_event_loop()
         jid, input_path, (w, h) = await loop.run_in_executor(None, _decode_and_save)
     except _TooLarge:
+        print(f"[jobs] image_too_large: {w * h} > {s.max_input_pixels} pixels", file=sys.stderr, flush=True)
         raise HTTPException(status_code=413, detail={
             "error": "image_too_large", "max_pixels": s.max_input_pixels,
             "got_pixels": w * h,
         })
     except UnidentifiedImageError as e:
         log.warning("UnidentifiedImageError: %s", e)
+        print(f"[jobs] UnidentifiedImageError: {e!r} (file is not a recognized image)", file=sys.stderr, flush=True)
         raise HTTPException(status_code=400, detail={
             "error": "unsupported_image",
             "message": "File is not a recognized image. Use PNG, JPEG, or WebP.",
@@ -79,13 +83,17 @@ async def create_job(
     except (OSError, ValueError) as e:
         # PIL raises these for truncated / corrupt files
         log.warning("Corrupt or truncated image: %s", e)
+        print(f"[jobs] Corrupt image: {e!r}", file=sys.stderr, flush=True)
         raise HTTPException(status_code=400, detail={
             "error": "corrupt_image",
             "message": "Image file appears to be corrupt or truncated. Try re-saving it.",
         })
-    except Exception:
+    except Exception as e:
         # Truly unexpected — log full traceback for debugging
         log.exception("Unexpected error during image decode/save")
+        print(f"[jobs] UNEXPECTED ERROR during decode/save: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(status_code=400, detail={"error": "decode_failed"})
 
     # Create job
