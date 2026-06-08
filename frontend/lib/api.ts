@@ -3,12 +3,23 @@ import type { Job } from "./types";
 const API_BASE = "/api";
 
 async function jsonOrThrow<T>(r: Response): Promise<T> {
+  // Read the body once as text, then try to parse as JSON.
+  // A Response body stream can only be consumed once, so we must not
+  // call r.json() and r.text() sequentially.
+  const text = await r.text();
   if (!r.ok) {
-    let body: unknown;
-    try { body = await r.json(); } catch { body = await r.text(); }
+    // Error path: try to surface structured JSON if the server gave it,
+    // otherwise fall back to the raw text (HTML error page, plain string, etc.)
+    let body: unknown = text;
+    try { body = JSON.parse(text); } catch { /* keep as text */ }
     throw new ApiError(r.status, body);
   }
-  return r.json() as Promise<T>;
+  // Success path: parse the text we already have
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(r.status, text);
+  }
 }
 
 export class ApiError extends Error {
