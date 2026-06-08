@@ -6,7 +6,7 @@ import io
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from app.api.deps import get_jm
 from app.services.job_manager import JobManager
@@ -65,13 +65,27 @@ async def create_job(
             return jid, input_path, (w, h)
         loop = asyncio.get_event_loop()
         jid, input_path, (w, h) = await loop.run_in_executor(None, _decode_and_save)
-    except _TooLarge as e:
+    except _TooLarge:
         raise HTTPException(status_code=413, detail={
             "error": "image_too_large", "max_pixels": s.max_input_pixels,
             "got_pixels": w * h,
         })
+    except UnidentifiedImageError as e:
+        log.warning("UnidentifiedImageError: %s", e)
+        raise HTTPException(status_code=400, detail={
+            "error": "unsupported_image",
+            "message": "File is not a recognized image. Use PNG, JPEG, or WebP.",
+        })
+    except (OSError, ValueError) as e:
+        # PIL raises these for truncated / corrupt files
+        log.warning("Corrupt or truncated image: %s", e)
+        raise HTTPException(status_code=400, detail={
+            "error": "corrupt_image",
+            "message": "Image file appears to be corrupt or truncated. Try re-saving it.",
+        })
     except Exception:
-        log.exception("decode failed")
+        # Truly unexpected — log full traceback for debugging
+        log.exception("Unexpected error during image decode/save")
         raise HTTPException(status_code=400, detail={"error": "decode_failed"})
 
     # Create job
