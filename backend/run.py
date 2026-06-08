@@ -65,6 +65,65 @@ def find_models(model_dir: str) -> dict[int, Path]:
     return found
 
 
+# URLs for the official SwinIR releases (Real-World Image SR)
+_MODEL_URLS = {
+    2: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2.pth",
+    4: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth",
+    8: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x8.pth",
+}
+
+
+def download_model(scale: int, dest_dir: str, log: logging.Logger) -> Path:
+    """Download a SwinIR weight file with a simple progress indicator.
+
+    Uses urllib (stdlib) so we don't need to add requests as a dep.
+    """
+    import shutil
+    import urllib.request
+    from urllib.error import URLError
+
+    if scale not in _MODEL_URLS:
+        raise ValueError(f"no URL known for scale={scale}")
+    url = _MODEL_URLS[scale]
+    dest = Path(dest_dir) / f"SwinIR_REALSR_X{scale}.pth"
+    if dest.exists():
+        log.info("Model already present: %s (%.1f MB)", dest, dest.stat().st_size / 1024 / 1024)
+        return dest
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    log.info("Downloading SwinIR X%d model from %s ...", scale, url)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            chunk_size = 64 * 1024
+            with open(tmp, "wb") as f:
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        pct = downloaded * 100 // total
+                        mb = downloaded / 1024 / 1024
+                        total_mb = total / 1024 / 1024
+                        print(f"\r  {pct:3d}%  {mb:5.1f} / {total_mb:5.1f} MB", end="", flush=True)
+        print()  # newline after progress
+    except URLError as e:
+        if tmp.exists():
+            tmp.unlink()
+        log.error("Failed to download model: %s", e)
+        log.error("Check your network connection, or manually download from:")
+        log.error("  %s", url)
+        log.error("And save to: %s", dest)
+        raise
+    shutil.move(str(tmp), str(dest))
+    log.info("Downloaded %s (%.1f MB)", dest, dest.stat().st_size / 1024 / 1024)
+    return dest
+
+
 def main() -> int:
     args = parse_args()
     logging.basicConfig(
@@ -83,21 +142,29 @@ def main() -> int:
     from app.services.job_manager import JobManager
     from app.services.job_store import JobStore
 
-    # Find model weights
+    # Find or download model weights
     models = find_models(args.model_dir)
+    use_stub = False
     if not models:
         if args.no_models_ok:
             log.warning("No model weights found in %s; using stub runner", args.model_dir)
-            from app.services.job_manager import _StubRunner
-            runner = _StubRunner(scale=4)
+            use_stub = True
         else:
-            log.error(
-                "No model weights found in %s. "
-                "Download X4 weights to %s/SwinIR_REALSR_X4.pth, or pass --no-models-ok. "
-                "See backend/README.md for download links.",
-                args.model_dir, args.model_dir,
-            )
-            return 1
+            # Auto-download the X4 model (the most common case)
+            log.info("No model weights found in %s; auto-downloading X4 ...", args.model_dir)
+            try:
+                download_model(4, args.model_dir, log)
+                models = find_models(args.model_dir)
+            except Exception:
+                log.error("Auto-download failed. Pass --no-models-ok to use the stub runner instead.")
+                return 2
+            if not models:
+                log.error("Still no models after download attempt. Giving up.")
+                return 2
+
+    if use_stub:
+        from app.services.job_manager import _StubRunner
+        runner = _StubRunner(scale=4)
     else:
         log.info("Loading SwinIR weights: %s", {s: str(p) for s, p in models.items()})
         runners = {
